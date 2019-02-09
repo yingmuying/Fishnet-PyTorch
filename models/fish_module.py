@@ -18,10 +18,8 @@ class FishBody(nn.Module):
                  trans_in_c, num_trans,
                  k=1, dilation=1):
         super().__init__()
-
         self.layer = UpRefinementBlock(in_c, out_c, num_res, k=k, dilation=dilation)
         self.transfer = TransferBlock(trans_in_c, num_trans)
-
 
     def forward(self, x, trans_x):
         x = self.layer(x)
@@ -35,7 +33,6 @@ class FishHead(nn.Module):
         super().__init__()
         self.layer = DownRefinementBlock(in_c, out_c, num_res)
         self.transfer = TransferBlock(trans_in_c, num_trans)
-
 
     def forward(self, x, trans_x):
         x = self.layer(x)
