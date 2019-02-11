@@ -4,10 +4,12 @@ from models.fish_module import FishHead, FishBody, FishTail
 
 
 class Fishnet(nn.Module):
-    def __init__(self, in_c=64):
+    def __init__(self, in_c=64, grow_rate=2,
+                 tails_res=(), bodys_res=(), heads_res=(),
+                 bodys_trans=(), heads_trans=()):
 
         self.stem = nn.Sequential(
-            nn.Conv2d(3, in_c//2, stride=2),
+            nn.Conv2d(3, in_c//2, 3, stride=2),
             nn.BatchNorm2d(in_c//2),
             nn.ReLU(True),
 
@@ -21,10 +23,41 @@ class Fishnet(nn.Module):
             nn.MaxPool2d(3, padding=1, stride=2)
         )
         
-        # TODO : Make Variable, current hardcoded parameter is based fish150
+        self.tails, self.tails_ch = [], []
+        for i in range(self.num_stage):
+            # tails_ch = [in_c, in_c * 2, in_c * 4 .... ]
+            tail_ch = in_c * (grow_rate ** i)
+            self.tails.append(FishTail(tail_ch, tail_ch * grow_rate, tails_res[i]))
+            self.tails_ch.append(tail_ch)
+        
+        bridge_ch = tail_ch * grow_rate
+        self.bridge = None
+
+        self.bodys_ch = [bridge_ch, bridge_ch + self.tails_ch[-1]]
+        self.bodys = [FishBody(bridge_ch, bridge_ch, bodys_res[0], 
+                               self.tails_ch[-1], bodys_trans[0])]
+        for i in range(1, self.num_stage):
+            transfer_ch = self.tails_ch[-i]
+            body_ch = self.bodys_ch[-1] # 768 -> 512 -> 320
+            self.bodys.append(FishBody(body_ch, body_ch // grow_rate, tails_res[i],
+                                       transfer_ch, bodys_trans[i]))
+            self.bodys_ch.append(body_ch // grow_rate + transfer_ch)
+        
+        
+        head_ch = body_ch
+        self.heads = []
+        for i in range(self.num_stage):
+            transfer_ch = self.bodys_ch[-i]
+            self.heads.append(FishHead(head_ch, head_ch, heads_res[i],
+                                       transfer_ch, heads_trans[i]))
+            head_ch += transfer_ch
+
+        # --------------------------------------------- #
+            
         self.tail1 = FishTail(in_c,   in_c*2, 2)
         self.tail2 = FishTail(in_c*2, in_c*4, 4)
         self.tail3 = FishTail(in_c*4, in_c*8, 8)
+
         # TODO : Bridge SE Block
         self.bridge = None
         
@@ -38,10 +71,11 @@ class Fishnet(nn.Module):
         # TODO : Check feature map channel
         self.head1 = FishHead(in_c*8, in_c*4, 2,
                               in_c*8, 2)
-        self.head1 = FishHead(in_c*8, in_c*4, 2,
+        self.head2 = FishHead(in_c*8, in_c*4, 2,
                               in_c*8, 2)
-        self.head1 = FishHead(in_c*8, in_c*4, 2,
+        self.head3 = FishHead(in_c*8, in_c*4, 2,
                               in_c*8, 2)
+
     def forward(self, x):
         stem = self.stem(x)
         tail1 = self.tail1(stem)
@@ -59,6 +93,9 @@ class Fishnet(nn.Module):
 
         out = self.classifier(head3)
         return out
+
+
+# ---------------- #
 
     def forward2(self, x):
         stem = self.stem(x)

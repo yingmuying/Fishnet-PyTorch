@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 
-from models.residual import DownRefinementBlock, TransferBlock, UpRefinementBlock
+from residual import DownRefinementBlock, TransferBlock, UpRefinementBlock
 
 
 class FishTail(nn.Module):
@@ -12,7 +12,7 @@ class FishTail(nn.Module):
     def forward(self, x):
         return self.layer(x)
 
-
+  
 class FishBody(nn.Module):
     def __init__(self, in_c, out_c, num_res,
                  trans_in_c, num_trans,
