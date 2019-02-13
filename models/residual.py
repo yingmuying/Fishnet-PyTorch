@@ -2,7 +2,7 @@ import torch.nn as nn
 
 class _ConvBlock(nn.Module):
     """
-    Construct Basic Convolution Block module.
+    Construct Basic Bottleneck Convolution Block module.
     
     Args:
         in_c : Number of channels in the input image
@@ -37,18 +37,17 @@ class TransferBlock(nn.Module):
     Construct Transfer Block module.
     
     Args:
-        in_c : Number of channels in the input image
-               Same with the number of channels in the output image
+        ch : Number of channels in the input and output image
         num_blk : Number of Residual Blocks
 
     Forwarding Path:
         input image - (ConvBlock) * num_blk - output
     """
-    def __init__(self, in_c, num_blk):
+    def __init__(self, ch, num_blk):
         super().__init__()
 
         self.layers = nn.Sequential(
-            *[_ConvBlock(in_c, in_c) for _ in range(0, num_blk)]
+            *[_ConvBlock(ch, ch) for _ in range(0, num_blk)]
         )
 
     def forward(self, x):
@@ -82,7 +81,7 @@ class DownRefinementBlock(nn.Module):
             nn.ReLU(True),
             nn.Conv2d(in_c, out_c, kernel_size=1, stride=stride, bias=False)
         )
-        self.pool = nn.MaxPool2d(2)
+        self.pool = nn.MaxPool2d(2, stride=2)
         
     def forward(self, x):
         out = self.res(x)
