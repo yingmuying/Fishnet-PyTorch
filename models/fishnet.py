@@ -1,119 +1,106 @@
 import torch.nn as nn
 
-from models.fish_module import FishHead, FishBody, FishTail
+from fish_module import FishHead, FishBody, FishTail
 
+def conv_bn_relu(in_c, out_c, kernel=3, stride=1, padding=1):
+    return nn.Sequential(
+        nn.Conv2d(in_c, out_c, kernel, stride=stride, padding=padding),
+        nn.BatchNorm2d(out_c),
+        nn.ReLU(True)
+    )
 
 class Fishnet(nn.Module):
-    def __init__(self, in_c=64, grow_rate=2,
-                 tails_res=(), bodys_res=(), heads_res=(),
-                 bodys_trans=(), heads_trans=()):
-
+    def __init__(self, in_c=64, num_cls=1000,
+                 tail_c=[], tail_res=[],
+                 body_c=[], body_res=[], body_trans=[],
+                 head_c=[], head_res=[], head_trans=[]):
+        super().__init__()
         self.stem = nn.Sequential(
-            nn.Conv2d(3, in_c//2, 3, stride=2),
-            nn.BatchNorm2d(in_c//2),
-            nn.ReLU(True),
-
-            nn.Conv2d(in_c//2, in_c//2),
-            nn.BatchNorm2d(in_c//2),
-            nn.ReLU(True),
-
-            nn.Conv2d(in_c//2, in_c),
-            nn.BatchNorm2d(in_c//2),
-            nn.ReLU(True),
+            conv_bn_relu(3, in_c//2, 3, stride=2),
+            conv_bn_relu(in_c//2, in_c//2, 3),
+            conv_bn_relu(in_c//2, in_c, 3),
             nn.MaxPool2d(3, padding=1, stride=2)
         )
+        print("Fishnet Init")
         
-        self.tails, self.tails_ch = [], []
-        for i in range(self.num_stage):
-            # tails_ch = [in_c, in_c * 2, in_c * 4 .... ]
-            tail_ch = in_c * (grow_rate ** i)
-            self.tails.append(FishTail(tail_ch, tail_ch * grow_rate, tails_res[i]))
-            self.tails_ch.append(tail_ch)
-        
-        bridge_ch = tail_ch * grow_rate
-        self.bridge = None
+        self.tails = []
+        for (in_c, out_c), num_res in zip(tail_c, tail_res):
+            print("tail : ", in_c, out_c, num_res)
+            layer = FishTail(in_c, out_c, num_res)
+            self.tails.append(layer)
 
-        self.bodys_ch = [bridge_ch, bridge_ch + self.tails_ch[-1]]
-        self.bodys = [FishBody(bridge_ch, bridge_ch, bodys_res[0], 
-                               self.tails_ch[-1], bodys_trans[0])]
-        for i in range(1, self.num_stage):
-            transfer_ch = self.tails_ch[-i]
-            body_ch = self.bodys_ch[-1] # 768 -> 512 -> 320
-            self.bodys.append(FishBody(body_ch, body_ch // grow_rate, tails_res[i],
-                                       transfer_ch, bodys_trans[i]))
-            self.bodys_ch.append(body_ch // grow_rate + transfer_ch)
-        
-        
-        head_ch = body_ch
+        self.bridge = nn.Conv2d(tail_c[-1][1], tail_c[-1][1], 3, 1, 1)
+
+        self.bodys = []
+        for i, ((in_c, out_c), num_res, num_trans) in enumerate(zip(body_c, body_res, body_trans)):
+            trans_c = tail_c[-i-1][0]
+            print("body : ", in_c, out_c, num_res, trans_c, num_trans)
+            layer = FishBody(in_c, out_c, num_res, trans_c, num_trans, dilation=2**i)
+            self.bodys.append(layer)
+
         self.heads = []
-        for i in range(self.num_stage):
-            transfer_ch = self.bodys_ch[-i]
-            self.heads.append(FishHead(head_ch, head_ch, heads_res[i],
-                                       transfer_ch, heads_trans[i]))
-            head_ch += transfer_ch
-
-        # --------------------------------------------- #
-            
-        self.tail1 = FishTail(in_c,   in_c*2, 2)
-        self.tail2 = FishTail(in_c*2, in_c*4, 4)
-        self.tail3 = FishTail(in_c*4, in_c*8, 8)
-
-        # TODO : Bridge SE Block
-        self.bridge = None
+        for i, ((in_c, out_c), num_res, num_trans) in enumerate(zip(head_c, head_res, head_trans)):
+            trans_c = body_c[-i-1][0]
+            print("head : ", in_c, out_c, num_res, trans_c, num_trans)
+            layer = FishHead(in_c, out_c, num_res, trans_c, num_trans)
+            self.heads.append(layer)
         
-        self.body1 = FishBody(in_c*8, in_c*8, 2,
-                              in_c*4, 2) # Output channel of Tail2
-        self.body2 = FishBody(in_c*8, in_c*8, 2,
-                              in_c*2, 2) # Output channel of Tail1
-        self.body3 = FishBody(in_c*8, in_c*8, 2,
-                              in_c, 2) # Output channel of Stem
-        
-        # TODO : Check feature map channel
-        self.head1 = FishHead(in_c*8, in_c*4, 2,
-                              in_c*8, 2)
-        self.head2 = FishHead(in_c*8, in_c*4, 2,
-                              in_c*8, 2)
-        self.head3 = FishHead(in_c*8, in_c*4, 2,
-                              in_c*8, 2)
+        # Last head output channel + First body input channel
+        last_c = head_c[-1][1] + body_c[0][0]
+        self.classifier = nn.Sequential(
+            nn.BatchNorm2d(last_c),
+            nn.ReLU(True),
+            nn.Conv2d(last_c, last_c//2, 1, bias=False),
+            nn.BatchNorm2d(last_c//2),
+            nn.ReLU(True),
+            nn.AdaptiveAvgPool2d(1),
+            nn.Conv2d(last_c // 2, num_cls, 1, bias=True)
+        )
 
     def forward(self, x):
-        stem = self.stem(x)
-        tail1 = self.tail1(stem)
-        tail2 = self.tail2(tail1)
-        tail3 = self.tail3(tail2)
-        bridge = self.bridge(tail3)
-
-        body1 = self.body1(bridge, tail2)
-        body2 = self.body2(body1, tail1)
-        body3 = self.body3(body2, stem)
-
-        head1 = self.head1(body3, body2)
-        head2 = self.head2(head1, body2)
-        head3 = self.head3(head2, body1)
-
-        out = self.classifier(head3)
-        return out
-
-
-# ---------------- #
-
-    def forward2(self, x):
         stem = self.stem(x)
         tail_features = [stem]
         for t in self.tails:
             last_feature = tail_features[-1]
             tail_features += [ t(last_feature) ]
-
+        print("Tail last feature : ", tail_features[-1].shape)
         bridge = self.bridge(tail_features[-1])
         body_features = [bridge]
         for b, tail in zip(self.bodys, reversed(tail_features[:-1])):
             last_feature = body_features[-1]
+            print("Body feature :", [b.shape for b in body_features])
             body_features += [ b(last_feature, tail) ]
 
         head_features = [body_features[-1]]
-        for h, body in zip(self.bodys, reversed(body_features[:-1])):
+        for h, body in zip(self.heads, reversed(body_features[:-1])):
             last_feature = head_features[-1]
+            print("Head feature :", [b.shape for b in head_features])
             head_features += [ h(last_feature, body) ]
 
         out = self.classifier(head_features[-1])
         return out
+
+
+def fish150():
+    net_cfg = {
+        "in_c":64,
+        "num_cls":1000,
+
+        "tail_c":[(64,  128), (128, 256), (256, 512)],
+        "tail_res" : [2, 4, 8],
+
+        "body_c":[(512, 512), (768, 384), (512, 256)],
+        "body_res" : [2, 2, 2],
+        "body_trans":[2, 2, 2],
+
+        "head_c":[(320, 320), (832, 832), (1600, 1600)],
+        "head_res" : [2, 2, 2],
+        "head_trans" : [2, 2, 2],
+    }
+    return Fishnet(**net_cfg)
+
+
+if __name__ == "__main__":
+    net = fish150()
+    from torchsummary import summary
+    summary(net, (3, 224, 224), device="cpu")

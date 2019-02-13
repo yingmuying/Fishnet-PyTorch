@@ -24,10 +24,11 @@ class _ResBlock(nn.Module):
 
 class TransferBlock(nn.Module):
     def __init__(self, in_c, num_res):
-        layers = []
-        for i in range(0, num_res):
-            layers.append(_ResBlock(in_c, in_c))
-        self.layers = nn.Sequential(*layers)
+        super().__init__()
+
+        self.layers = nn.Sequential(
+            *[_ResBlock(in_c, in_c) for _ in range(0, num_res)]
+        )
 
     def forward(self, x):
         return self.layers(x)
@@ -39,7 +40,9 @@ class DownRefinementBlock(nn.Module):
         super().__init__()
 
         self.res = _ResBlock(in_c, out_c)
-        self.regular_connection = [_ResBlock(out_c, out_c) for _ in range(1, num_res)]
+        self.regular_connection = nn.Sequential(
+            *[_ResBlock(out_c, out_c) for _ in range(1, num_res)]
+        )
         self.shortcut = nn.Sequential(
             nn.BatchNorm2d(in_c),
             nn.ReLU(True),
@@ -56,12 +59,14 @@ class DownRefinementBlock(nn.Module):
 
 # Up-sampling & Refinement Block(UR Block)
 class UpRefinementBlock(nn.Module):
-    def __init__(self, in_c, out_c, num_res, stride=1, k=1, dilation=1):
+    def __init__(self, in_c, out_c, num_res, stride=1, dilation=1):
         super().__init__()
         
-        self.k = k
+        self.k = in_c // out_c
         self.res = _ResBlock(in_c, out_c, dilation=dilation)
-        self.regular_connection = [_ResBlock(out_c, out_c, dilation=dilation) for _ in range(1, num_res)]
+        self.regular_connection = nn.Sequential(
+            *[_ResBlock(out_c, out_c, dilation=dilation) for _ in range(1, num_res)]
+        )
       
         self.upsample = nn.Upsample(scale_factor=2)
 
