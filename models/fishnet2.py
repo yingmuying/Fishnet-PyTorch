@@ -32,9 +32,9 @@ class Fishnet(nn.Module):
         #         0    1    2    3
         #        -4   -3   -2   -1
         tails = [64, 128, 256, 512]
-        num_res = [4, 4, 4, 4]
+        num_blk = [4, 4, 4, 4]
         self.tail_layers = []
-        for in_c, res in zip(tails, num_res):
+        for in_c, res in zip(tails, num_blk):
             self.tail_layers.append(FishTail(in_c, in_c * 2, res))
 
         

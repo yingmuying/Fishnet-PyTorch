@@ -10,43 +10,52 @@ def conv_bn_relu(in_c, out_c, kernel=3, stride=1, padding=1):
     )
 
 class Fishnet(nn.Module):
-    def __init__(self, in_c=64, num_cls=1000,
-                 tail_c=[], tail_res=[],
-                 body_c=[], body_res=[], body_trans=[],
-                 head_c=[], head_res=[], head_trans=[]):
+    def __init__(self, start_c=64, num_cls=1000,
+                 tail_num_res=[],
+                 body_num_res=[], body_num_trans=[],
+                 head_num_res=[], head_num_trans=[]):
         super().__init__()
+
         self.stem = nn.Sequential(
-            conv_bn_relu(3, in_c//2, 3, stride=2),
-            conv_bn_relu(in_c//2, in_c//2, 3),
-            conv_bn_relu(in_c//2, in_c, 3),
+            conv_bn_relu(3, start_c//2, 3, stride=2),
+            conv_bn_relu(start_c//2, start_c//2, 3),
+            conv_bn_relu(start_c//2, start_c, 3),
             nn.MaxPool2d(3, padding=1, stride=2)
         )
-        print("Fishnet Init")
+        print("Fishnet Init Start")
         
-        self.tails = []
-        for (in_c, out_c), num_res in zip(tail_c, tail_res):
-            print("tail : ", in_c, out_c, num_res)
-            layer = FishTail(in_c, out_c, num_res)
-            self.tails.append(layer)
+        self.tail_layer,  tail_c = nn.ModuleList(), [start_c]
+        for i, num_blk in enumerate(tail_num_res):            
+            in_c = tail_c[-1]
+            layer = FishTail(in_c, in_c*2, num_blk)
+            self.tail_layer.append(layer)
+            tail_c.append(in_c*2)
 
-        self.bridge = nn.Conv2d(tail_c[-1][1], tail_c[-1][1], 3, 1, 1)
-
-        self.bodys = []
-        for i, ((in_c, out_c), num_res, num_trans) in enumerate(zip(body_c, body_res, body_trans)):
-            trans_c = tail_c[-i-1][0]
-            print("body : ", in_c, out_c, num_res, trans_c, num_trans)
-            layer = FishBody(in_c, out_c, num_res, trans_c, num_trans, dilation=2**i)
-            self.bodys.append(layer)
-
-        self.heads = []
-        for i, ((in_c, out_c), num_res, num_trans) in enumerate(zip(head_c, head_res, head_trans)):
-            trans_c = body_c[-i-1][0]
-            print("head : ", in_c, out_c, num_res, trans_c, num_trans)
-            layer = FishHead(in_c, out_c, num_res, trans_c, num_trans)
-            self.heads.append(layer)
+        self.bridge = nn.Conv2d(tail_c[-1], tail_c[-1], 3, 1, 1)
         
-        # Last head output channel + First body input channel
-        last_c = head_c[-1][1] + body_c[0][0]
+        # Tail C :  [64, 128, 256, 512]
+        self.body_layer, body_c = [], [tail_c[-1], tail_c[-1] + tail_c[-2]]
+        # First body module is not change feature map channel
+        self.body_layer = nn.ModuleList([FishBody(body_c[-2], body_c[-2], body_num_res[0],
+                                    tail_c[-2], body_num_trans[0])])
+
+        for i, (num_blk, num_trans) in enumerate(zip(body_num_res[1:], body_num_trans[1:]), start=1):
+            in_c = body_c[-1]
+            trans_c = tail_c[-i-2]
+            layer = FishBody(in_c, in_c//2, num_blk, trans_c, num_trans, dilation=2**i)
+            self.body_layer.append(layer)
+            body_c.append(in_c//2 + trans_c)
+
+
+        self.head_layer = nn.ModuleList()
+        head_in_c = body_c[-1]
+        for i, (num_blk, num_trans) in enumerate(zip(head_num_res, head_num_trans)):
+            trans_c = body_c[-i-2]
+            layer = FishHead(head_in_c, head_in_c, num_blk, trans_c, num_trans)
+            self.head_layer.append(layer)
+            head_in_c += trans_c
+
+        last_c = head_in_c
         self.classifier = nn.Sequential(
             nn.BatchNorm2d(last_c),
             nn.ReLU(True),
@@ -60,21 +69,20 @@ class Fishnet(nn.Module):
     def forward(self, x):
         stem = self.stem(x)
         tail_features = [stem]
-        for t in self.tails:
+        for t in self.tail_layer:
             last_feature = tail_features[-1]
             tail_features += [ t(last_feature) ]
-        print("Tail last feature : ", tail_features[-1].shape)
+
         bridge = self.bridge(tail_features[-1])
+
         body_features = [bridge]
-        for b, tail in zip(self.bodys, reversed(tail_features[:-1])):
+        for b, tail in zip(self.body_layer, reversed(tail_features[:-1])):
             last_feature = body_features[-1]
-            print("Body feature :", [b.shape for b in body_features])
             body_features += [ b(last_feature, tail) ]
 
         head_features = [body_features[-1]]
-        for h, body in zip(self.heads, reversed(body_features[:-1])):
+        for h, body in zip(self.head_layer, reversed(body_features[:-1])):
             last_feature = head_features[-1]
-            print("Head feature :", [b.shape for b in head_features])
             head_features += [ h(last_feature, body) ]
 
         out = self.classifier(head_features[-1])
@@ -83,19 +91,17 @@ class Fishnet(nn.Module):
 
 def fish150():
     net_cfg = {
-        "in_c":64,
-        "num_cls":1000,
+        # Input channel before FishTail
+        "start_c" : 64,
+        "num_cls" : 1000,
 
-        "tail_c":[(64,  128), (128, 256), (256, 512)],
-        "tail_res" : [2, 4, 8],
+        "tail_num_res" : [2, 4, 8],
 
-        "body_c":[(512, 512), (768, 384), (512, 256)],
-        "body_res" : [2, 2, 2],
-        "body_trans":[2, 2, 2],
+        "body_num_res" : [2, 2, 2],
+        "body_num_trans" : [2, 2, 2],
 
-        "head_c":[(320, 320), (832, 832), (1600, 1600)],
-        "head_res" : [2, 2, 2],
-        "head_trans" : [2, 2, 2],
+        "head_num_res" : [2, 2, 2],
+        "head_num_trans" : [2, 2, 2],
     }
     return Fishnet(**net_cfg)
 
