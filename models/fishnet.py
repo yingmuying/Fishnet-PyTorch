@@ -7,8 +7,8 @@ from fish_module import FishHead, FishBody, FishTail, Bridge
 # https://github.com/kevin-ssy/FishNet/blob/master/models/fishnet.py#L197
 def _conv_bn_relu(in_ch, out_ch, stride=1):
     return nn.Sequential(nn.Conv2d(in_ch, out_ch, kernel_size=3, padding=1, stride=stride, bias=False),
-                            nn.BatchNorm2d(out_ch),
-                            nn.ReLU(inplace=True))
+                         nn.BatchNorm2d(out_ch),
+                         nn.ReLU(inplace=True))
 
 class Fishnet(nn.Module):
     """
@@ -27,12 +27,17 @@ class Fishnet(nn.Module):
         body_num_trans : list of the numbers of Conv blocks in transfer paths in each FishTail stages
         head_num_trans : list of the numbers of Conv blocks in transfer paths in each FishHead stages
 
+        # TODO : Comment check
+        tail_channels : list of the in, out channel of each stages        
+        body_channels : list of the in, out channel of each stages
+        head_channels : list of the in, out channel of each stages
 
     """
     def __init__(self, start_c=64, num_cls=1000,
                  tail_num_blk=[], bridge_num_blk=2,
                  body_num_blk=[], body_num_trans=[],
-                 head_num_blk=[], head_num_trans=[]):
+                 head_num_blk=[], head_num_trans=[],
+                 tail_channels=[], body_channels=[], head_channels=[]):
         super().__init__()
 
         self.stem = nn.Sequential(
@@ -44,33 +49,27 @@ class Fishnet(nn.Module):
 
         print("Fishnet Init Start")
         
-        self.tail_layer,  tail_c = nn.ModuleList(), [start_c]
+        self.tail_layer = nn.ModuleList()
         for i, num_blk in enumerate(tail_num_blk):            
-            in_c = tail_c[-1]
-            layer = FishTail(in_c, in_c*2, num_blk)
+            layer = FishTail(tail_channels[i], tail_channels[i+1], num_blk)
             self.tail_layer.append(layer)
-            tail_c.append(in_c*2)
 
-        self.bridge = Bridge(tail_c[-1], bridge_num_blk)
-        self.body_layer, body_c = [], [tail_c[-1], tail_c[-1] + tail_c[-2]]
+        self.bridge = Bridge(tail_channels[-1], bridge_num_blk)
+
         # First body module is not change feature map channel
-        self.body_layer = nn.ModuleList([FishBody(body_c[-2], body_c[-2], body_num_blk[0],
-                                    tail_c[-2], body_num_trans[0])])
-        for i, (num_blk, num_trans) in enumerate(zip(body_num_blk[1:], body_num_trans[1:]), start=1):
-            in_c = body_c[-1]
-            trans_c = tail_c[-i-2]
-            layer = FishBody(in_c, in_c//2, num_blk, trans_c, num_trans, dilation=2**i)
+        self.body_layer = nn.ModuleList()
+        for i, (num_blk, num_trans) in enumerate(zip(body_num_blk, body_num_trans)):
+            layer = FishBody(body_channels[i][0], body_channels[i][1], num_blk, 
+                             tail_channels[-i-2], num_trans, dilation=2**i)
             self.body_layer.append(layer)
-            body_c.append(in_c//2 + trans_c)
 
         self.head_layer = nn.ModuleList()
-        head_in_c = body_c[-1]
         for i, (num_blk, num_trans) in enumerate(zip(head_num_blk, head_num_trans)):
-            trans_c = body_c[-i-2]
-            layer = FishHead(head_in_c, head_in_c, num_blk, trans_c, num_trans)
+            layer = FishHead(head_channels[i][0], head_channels[i][1], num_blk,
+                             body_channels[-i-1][0], num_trans)
             self.head_layer.append(layer)
-            head_in_c += trans_c
-        last_c = head_in_c
+
+        last_c = head_channels[-1][1]
         self.classifier = nn.Sequential(
             nn.BatchNorm2d(last_c),
             nn.ReLU(True),
@@ -114,30 +113,3 @@ class Fishnet(nn.Module):
 
         out = self.classifier(head_features[-1])
         return out
-
-    
-
-
-def fish150():
-    net_cfg = {
-        # Input channel before FishTail
-        "start_c" : 64,
-        "num_cls" : 1000,
-
-        "tail_num_blk" : [2, 4, 8],
-
-        "bridge_num_blk" : 4,
-
-        "body_num_blk" : [2, 2, 2],
-        "body_num_trans" : [2, 2, 2],
-
-        "head_num_blk" : [2, 2, 4],
-        "head_num_trans" : [2, 2, 4],
-    }
-    return Fishnet(**net_cfg)
-
-
-if __name__ == "__main__":
-    net = fish150()
-    from torchsummary import summary
-    summary(net, (3, 224, 224), device="cpu")

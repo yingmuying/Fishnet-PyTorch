@@ -1,5 +1,12 @@
 import torch.nn as nn
 
+def _bn_relu_conv(in_c, out_c, **conv_kwargs):
+    return nn.Sequential(
+        nn.BatchNorm2d(in_c),
+        nn.ReLU(True),
+        nn.Conv2d(in_c, out_c, conv_kwargs),
+    )
+
 class _ConvBlock(nn.Module):
     """
     Construct Basic Bottleneck Convolution Block module.
@@ -18,15 +25,9 @@ class _ConvBlock(nn.Module):
 
         mid_c = out_c // 4
         self.layers = nn.Sequential(
-            nn.BatchNorm2d(in_c),
-            nn.ReLU(True),
-            nn.Conv2d(in_c, mid_c, kernel_size=1, bias=False),
-            nn.BatchNorm2d(mid_c),
-            nn.ReLU(True),
-            nn.Conv2d(mid_c, mid_c, kernel_size=3, stride=stride, padding=dilation, dilation=dilation, bias=False),
-            nn.BatchNorm2d(mid_c),
-            nn.ReLU(True),
-            nn.Conv2d(mid_c, out_c, kernel_size=1, bias=False)
+            _bn_relu_conv(in_c, mid_c, kernel_size=1, bias=False),
+            _bn_relu_conv(mid_c, mid_c, kernel_size=3, stride=stride, padding=dilation, dilation=dilation, bias=False),
+            _bn_relu_conv(mid_c, out_c, kernel_size=1, bias=False),
         )
 
     def forward(self, x):
@@ -76,11 +77,7 @@ class DownRefinementBlock(nn.Module):
         self.regular_connection = nn.Sequential(
             *[_ConvBlock(out_c, out_c) for _ in range(1, num_blk)]
         )
-        self.shortcut = nn.Sequential(
-            nn.BatchNorm2d(in_c),
-            nn.ReLU(True),
-            nn.Conv2d(in_c, out_c, kernel_size=1, stride=stride, bias=False)
-        )
+        self.shortcut = _bn_relu_conv(in_c, out_c, kernel_size=1, stride=stride, bias=False)
         self.pool = nn.MaxPool2d(2, stride=2)
         
     def forward(self, x):
