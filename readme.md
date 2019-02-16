@@ -1,14 +1,14 @@
 TODO
- - Calculate Channel indexing
- - Add net-factory
- - Add Bridge Block ( in SE Block )
- - Check channel of block contains transfer.
+ - Strict implementation of original paper
 
- # Attention
-Original Paper and its original implementation have differences in real
+ # Notes
+There might be some difference between Original Paper and its original implementation
 
-original implementation have features below,
- 1. DR Block / UR Block (using shortcut layer/squeeze channel) is only used once
- 2. In FishHead, Shortcut is not used
- 3. In FishTail, Shortcut is used
-which is explained as key features of FishNet in the original paper
+Original implementation seems to have features below:
+ 1. Regular connections have no residual shortcut (FishTail, TransferBlock, or Non-DRBlock/URBlock parts of FishBody/FishHead)
+ 2. In FishHead, Shortcut is not used in DRBlock
+
+However, according the original paper, probably, they should be like below:
+ 1. Regular connections should have residual shortcuts
+ 2. In FishHead, Shortcut should be used in DRBlock
+ 

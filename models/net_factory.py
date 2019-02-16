@@ -1,22 +1,23 @@
 from fishnet import Fishnet
 
-# TODO : add comment, re-naming
-def _make_channel(start_c, num_blk):
+def _calc_channel(start_c, num_blk):
     """
-    Calculate the channel of Fishnet stages.
+    Calculate the number of in and out channels of each stages in FishNet.
 
     Example:
         fish150 : start channel=64, num_blk=3,
-        tail channels : Grow double times in each stages,
+        tail channels : Grow double in each stages,
                         [64, 128, 256 ...] = [start channel ** (2**num_blk) ....] 
-        body channels : In first stage, not change output channel but the other layers, output to half
-                        And add transfer channel on output channel
-                        Transfer channel is reverse order from the tail channel[-2]
+        body channels : In first stage, in_channel and out_channel is the same,
+                        but the other layers, the number of output channels is half of the number of input channel
+                        Add the number of transfer channels to the number of output channels
+                        The numbers of transfer channels are reverse of the tail channel[:-2]
                         [(512, 512), + 256
                          (768, 384), + 128
                          (512, 256)] + 64
-        head channels : not change output channel And add transfer channel
-                        Transfer channel is reverse order from the Input of head channels
+        head channels : The number of input channels and output channels is the same.
+                        Add the number of transfer channels to the number of output channels
+                        The numbers of transfer channels are reverse of the tail channel[:-2]
                         [(320, 320),   + 512
                          (832, 832),   + 768
                          (1600, 1600)] + 512
@@ -58,7 +59,7 @@ def fish99(num_cls=1000):
     head_num_blk = [1, 2, 2]
     head_num_trans = [1, 1, 4]
 
-    net_channel = _make_channel(start_c, len(tail_num_blk))
+    net_channel = _calc_channel(start_c, len(tail_num_blk))
 
     return Fishnet(start_c, num_cls, 
                    tail_num_blk, bridge_num_blk,
@@ -78,7 +79,7 @@ def fish150(num_cls=1000):
     head_num_blk = [2, 2, 4]
     head_num_trans = [2, 2, 4]
 
-    net_channel = _make_channel(start_c, len(tail_num_blk))
+    net_channel = _calc_channel(start_c, len(tail_num_blk))
 
     return Fishnet(start_c, num_cls, 
                    tail_num_blk, bridge_num_blk,

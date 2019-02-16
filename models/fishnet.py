@@ -26,11 +26,9 @@ class Fishnet(nn.Module):
             (Note : `*_num_blk` includes 1 Residual blocks in the start of each stages)
         body_num_trans : list of the numbers of Conv blocks in transfer paths in each FishTail stages
         head_num_trans : list of the numbers of Conv blocks in transfer paths in each FishHead stages
-
-        # TODO : Comment check
-        tail_channels : list of the in, out channel of each stages        
-        body_channels : list of the in, out channel of each stages
-        head_channels : list of the in, out channel of each stages
+        tail_channels : list of the number of in, out channel of each stages        
+        body_channels : list of the number of in, out channel of each stages
+        head_channels : list of the number of in, out channel of each stages
 
     """
     def __init__(self, start_c=64, num_cls=1000,
@@ -39,7 +37,6 @@ class Fishnet(nn.Module):
                  head_num_blk=[], head_num_trans=[],
                  tail_channels=[], body_channels=[], head_channels=[]):
         super().__init__()
-
         self.stem = nn.Sequential(
             _conv_bn_relu(3, start_c//2, stride=2),
             _conv_bn_relu(start_c//2, start_c//2),
@@ -47,7 +44,7 @@ class Fishnet(nn.Module):
             nn.MaxPool2d(3, padding=1, stride=2)
         )
 
-        print("Fishnet Init Start")
+        print("FishNet Initialzation Start")
         
         self.tail_layer = nn.ModuleList()
         for i, num_blk in enumerate(tail_num_blk):            

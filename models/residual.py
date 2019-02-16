@@ -4,7 +4,7 @@ def _bn_relu_conv(in_c, out_c, **conv_kwargs):
     return nn.Sequential(
         nn.BatchNorm2d(in_c),
         nn.ReLU(True),
-        nn.Conv2d(in_c, out_c, conv_kwargs),
+        nn.Conv2d(in_c, out_c, **conv_kwargs),
     )
 
 class _ConvBlock(nn.Module):
