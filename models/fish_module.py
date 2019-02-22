@@ -125,13 +125,18 @@ class FishHead(nn.Module):
         num_trans : Number of Transfer Blocks
         
     Forwarding Path:
-        input image - (DRBlock)  ㄱ
-        trans image - (transfer) --(concat)-- output
+        input image - (ConvBlock) * num_blk - pool  ㄱ
+        trans image - (transfer)               --(concat)-- output
     """
     def __init__(self, in_c, out_c, num_blk,
                  trans_in_c, num_trans):
         super().__init__()
-        self.layer = DownRefinementBlock(in_c, out_c, num_blk)
+        # self.layer = DownRefinementBlock(in_c, out_c, num_blk)
+        self.layer = nn.Sequential(
+            _ConvBlock(in_c, out_c),
+            *[_ConvBlock(out_c, out_c) for _ in range(1, num_blk)],
+            nn.MaxPool3d(2, stride=2)
+        )
         self.transfer = TransferBlock(trans_in_c, num_trans)
 
     def forward(self, x, trans_x):
