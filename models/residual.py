@@ -1,5 +1,6 @@
 import torch.nn as nn
 
+
 def _bn_relu_conv(in_c, out_c, **conv_kwargs):
     return nn.Sequential(
         nn.BatchNorm2d(in_c),
@@ -7,31 +8,42 @@ def _bn_relu_conv(in_c, out_c, **conv_kwargs):
         nn.Conv2d(in_c, out_c, **conv_kwargs),
     )
 
-class _ConvBlock(nn.Module):
+
+class ResBlock(nn.Module):
     """
-    Construct Basic Bottleneck Convolution Block module.
+    Construct Basic Bottle-necked Residual Block module.
     
     Args:
         in_c : Number of channels in the input image
         out_c : Number of channels in the output image
+        shortcut : Specific function for skip-connection
+            Examples)
+                'bn_relu_conv' for DownRefinementBlock 
+                'bn_relu_conv with channel reduction' for UpRefinementBlock
+                'identity mapping' for regular connection
         stride : Stride of middle conv layer
         dilation : Dilation rate of middle conv layer
 
     Forwarding Path:
-        input image - (BN-ReLU-Conv) * 3 - output
+                ⎡        (shortcut)         ⎤
+        input image - (BN-ReLU-Conv) * 3 - (add) -output
     """
-    def __init__(self, in_c, out_c, stride=1, dilation=1):
-        super(_ConvBlock, self).__init__()
+    def __init__(self, in_c, out_c, shortcut=lambda x: x,
+                 stride=1, dilation=1):
+        super(ResBlock, self).__init__()
 
         mid_c = out_c // 4
         self.layers = nn.Sequential(
-            _bn_relu_conv(in_c, mid_c, kernel_size=1, bias=False),
+            _bn_relu_conv(in_c, mid_c,  kernel_size=1, bias=False),
             _bn_relu_conv(mid_c, mid_c, kernel_size=3, stride=stride, padding=dilation, dilation=dilation, bias=False),
             _bn_relu_conv(mid_c, out_c, kernel_size=1, bias=False),
         )
 
+        self.shortcut = shortcut
+
     def forward(self, x):
-        return self.layers(x)
+        return self.layers(x) + self.shortcut(x)
+
 
 class TransferBlock(nn.Module):
     """
@@ -42,24 +54,28 @@ class TransferBlock(nn.Module):
         num_blk : Number of Residual Blocks
 
     Forwarding Path:
-        input image - (ConvBlock) * num_blk - output
+        input image - (ResBlock) * num_blk - output
     """
     def __init__(self, ch, num_blk):
         super().__init__()
 
         self.layers = nn.Sequential(
-            *[_ConvBlock(ch, ch) for _ in range(0, num_blk)]
+            *[ResBlock(ch, ch) for _ in range(0, num_blk)]
         )
 
     def forward(self, x):
         return self.layers(x)
 
 
-class DownRefinementBlock(nn.Module):
+class DownStage(nn.Module):
     """
-    Construct Down-RefinementBlock module. (DRBlock from the original paper)
-    Consisted of one Residual Block and Conv Blocks.
-    
+    Construct a stage for each resolution.
+    A DownStage is consisted of one DownRefinementBlock and several residual regular connection blocks.
+
+    (Note: In fact, DownRefinementBlock is not used in FishHead according to original implementation.
+           However, it seems needed to be used according to original paper.
+           In this version, we followed original implementation, not original paper.)
+
     Args:
         in_c : Number of channels in the input image
         out_c : Number of channels in the output image
@@ -67,31 +83,27 @@ class DownRefinementBlock(nn.Module):
         stride : Stride of shortcut conv layer
 
     Forwarding Path:
-                    ⎡      (BN-ReLU-Conv)     ⎤
-        input image - (ConvBlock) * num_blk -(sum)- feature - (MaxPool) - output
+        input image - (ResBlock with Shortcut) - (ResBlock) * num_blk - (MaxPool) - output
     """
     def __init__(self, in_c, out_c, num_blk, stride=1):
         super().__init__()
 
-        self.res = _ConvBlock(in_c, out_c)
-        self.regular_connection = nn.Sequential(
-            *[_ConvBlock(out_c, out_c) for _ in range(1, num_blk)]
+        shortcut = _bn_relu_conv(in_c, out_c, kernel_size=1, stride=stride, bias=False)
+        self.layer = nn.Sequential(
+            ResBlock(in_c, out_c, shortcut=shortcut),
+            *[ResBlock(out_c, out_c) for _ in range(1, num_blk)],
+            nn.MaxPool2d(2, stride=2)
         )
-        self.shortcut = _bn_relu_conv(in_c, out_c, kernel_size=1, stride=stride, bias=False)
-        self.pool = nn.MaxPool2d(2, stride=2)
         
     def forward(self, x):
-        out = self.res(x)
-        shortcut = self.shortcut(x)
-        out = self.regular_connection(out + shortcut)
-        return self.pool(out)
+        return self.layer(x)
 
 
-class UpRefinementBlock(nn.Module):
+class UpStage(nn.Module):
     """
-    Construct Up-RefinementBlock module. (URBlock from the original paper)
-    Consisted of Residual Block and Conv Blocks.
-    Not like DRBlock, this module reduces the number of channels of concatenated feature maps in the shortcut path.
+    Construct a stage for each resolution.
+    A DownStage is consisted of one DownRefinementBlock and several residual regular connection blocks.
+    Not like DownStage, this module reduces the number of channels of concatenated feature maps in the shortcut path.
     
     Args:
         in_c : Number of channels in the input image
@@ -100,25 +112,21 @@ class UpRefinementBlock(nn.Module):
         stride : Stride of shortcut conv layer
 
     Forwarding Path:
-                    ⎡      (BN-ReLU-Conv)     ⎤
-        input image - (ConvBlock) * num_blk -(sum)- feature - (UpSample) - output
+        input image - (ResBlock with Channel Reduction) - (ResBlock) * num_blk - (UpSample) - output
     """
     def __init__(self, in_c, out_c, num_blk, stride=1, dilation=1):
         super().__init__()
         self.k = in_c // out_c
-        self.res = _ConvBlock(in_c, out_c, dilation=dilation)
-        self.regular_connection = nn.Sequential(
-            *[_ConvBlock(out_c, out_c, dilation=dilation) for _ in range(1, num_blk)]
+
+        self.layer = nn.Sequential(
+            ResBlock(in_c, out_c, shortcut=self.channel_reduction, dilation=dilation),
+            *[ResBlock(out_c, out_c, dilation=dilation) for _ in range(1, num_blk)],
+            nn.Upsample(scale_factor=2)            
         )
-      
-        self.upsample = nn.Upsample(scale_factor=2)
 
     def channel_reduction(self, x):
         n, c, *dim = x.shape
         return x.view(n, c // self.k, self.k, *dim).sum(2)
         
     def forward(self, x):
-        out = self.res(x)
-        shortcut = self.channel_reduction(x)
-        out = self.regular_connection(out + shortcut)
-        return self.upsample(out)
+        return self.layer(x)
