@@ -13,15 +13,9 @@ Authors : [Jihyeong Yoo](https://github.com/YooJiHyeong), [Daewoong Ahn](https:/
 There might be some difference between Original Paper and its original implementation
 
 Original implementation seems to have features below:
- 1. Regular connections have no residual shortcut (FishTail, TransferBlock, or Non-DRBlock/URBlock parts of FishBody/FishHead)
- 2. In FishHead, Shortcut is not used in DRBlock
+ 1. In ResBlock of FishTail, bn_relu_conv shortcut is used
+ 2. In ResBlock of FishHead, bn_relu_conv shortcut is not used
 
 However, according the original paper, probably, they should be like below:
- 1. Regular connections should have residual shortcuts
- 2. In FishHead, Shortcut should be used in DRBlock
- 
-<hr>
-
-## How to use:
-```
-```
+ 1. bn_relu_conv shortcut should not be used in ResBlock of FishTail
+ 2. bn_relu_conv shortcut should be used in ResBlock of FishHead
